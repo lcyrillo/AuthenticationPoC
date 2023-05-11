@@ -4,6 +4,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
+using AuthenticationPOC.Interfaces;
 
 namespace AuthenticationPOC.Controllers;
 
@@ -11,22 +12,27 @@ namespace AuthenticationPOC.Controllers;
 [ApiController]
 public class AuthController : ControllerBase
 {
-    public static User user = new User();
     private readonly IConfiguration configuration;
+    private readonly IUserDao _userDao;
 
-    public AuthController(IConfiguration configuration)
+    public AuthController(IConfiguration configuration,
+                           IUserDao userDao)
     {
         this.configuration = configuration;
+        _userDao = userDao;
     }
 
     [HttpPost("register")]
     public ActionResult<User> Register(UserDto request)
     {
-        CreatePasswordHash(request.Password, out byte[] passwordHash, out byte[] passowrdSalt);
+        CreatePasswordHash(request.Password, out byte[] passwordHash, out byte[] passwordSalt);
 
+        User user = new User();
         user.Username = request.UserName;
         user.PasswordHash = passwordHash;
-        user.PasswordSalt = passowrdSalt;
+        user.PasswordSalt = passwordSalt;
+
+        _userDao.Add(user);
 
         return Ok(user);
     }
@@ -34,9 +40,16 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     public ActionResult<string> Login(UserDto request)
     {
-        if (user.Username != request.UserName)
+        if (request.UserName is null || request.Password is null)
         {
-            return BadRequest("User Not Found");
+            return BadRequest(request);
+        }
+
+        var user = _userDao.GetUser(request);
+
+        if (user is null)
+        {
+            return BadRequest("User not found");
         }
 
         if (!VerifyPasswordHash(request.Password, user.PasswordHash, user.PasswordSalt))
@@ -56,8 +69,7 @@ public class AuthController : ControllerBase
             new Claim(ClaimTypes.Name, user.Username)
         };
 
-        var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(
-                configuration.GetSection("AppSettings:Token").Value));
+        var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(configuration.GetSection("AppSettings:Token").Value));
 
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha512Signature);
 
